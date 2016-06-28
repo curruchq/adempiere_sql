@@ -1284,8 +1284,8 @@ WHERE  i.ad_pinstance_id = p_param_id;
 COMMIT;
 
 -- Get Run Date
-BEGIN
-     SELECT p.p_date,
+Begin
+     SELECT p.p_date-1,
             p.ad_client_id,
             p.ad_org_id
      INTO   v_run_as_date,
@@ -1584,17 +1584,18 @@ FOR cycle IN cycle_c LOOP
        v_qty := MONTHS_BETWEEN(v_pay_thru_date,sub.paiduntildate);
        getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
     ELSIF sub.frequencytype = 'D' THEN -- Days
-       v_qty := v_pay_thru_date - sub.paiduntildate;
+       v_period_qty := v_pay_thru_date - sub.paiduntildate;
+        v_qty := v_pay_thru_date - sub.paiduntildate;
        getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
     ELSIF sub.frequencytype = 'Z' THEN -- One Off Charge
        v_pay_thru_date := sub.renewaldate; -- Set pay thru to end date
        -- If weve already billed this dont charge again.
-       IF sub.ever_billed = 'Y' THEN
-          V_Qty := 0;
+       If sub.Ever_Billed = 'Y' Then
+          v_qty := 0;
           v_period_qty := 1;
        ELSE
-          V_Qty := 1; -- Something to bill
-          v_period_qty := 1;
+          v_qty := 1; -- Something to bill
+           v_period_qty := 1;
           getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
        END IF;
     ELSIF sub.frequencytype = 'Y' THEN -- Monthly Calls
@@ -1631,10 +1632,10 @@ FOR cycle IN cycle_c LOOP
     END IF;
 
     -- Create new invoice lines for non zero qty lines
-    IF v_qty <> 0 THEN
+    IF v_qty <> 0 and v_period_qty <> 0 THEN
 
        -- Calc Line Amount
-       v_line_amt := ROUND(v_qty * v_unit_pricestd,2);
+       v_line_amt := ROUND(v_qty * v_period_qty * v_unit_pricestd,2);
        
        -- Insert Line
        invline(p_client_id,
@@ -1675,7 +1676,8 @@ FOR cycle IN cycle_c LOOP
     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,5,'P','mod_billing.main','Std Price         :'||v_unit_pricestd);
     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,5,'P','mod_billing.main','List Price        :'||v_unit_pricelist);
     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,5,'P','mod_billing.main','Limit Price       :'||v_unit_pricelimit);
-
+    mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,5,'P','mod_billing.main','Period Qty       :'||v_period_qty);
+    
     -- Update processed call records if this was a calls subscription
     IF v_temp_line_id IS NOT NULL THEN
 
