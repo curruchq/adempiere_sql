@@ -1602,9 +1602,11 @@ FOR cycle IN cycle_c LOOP
        getcalls(p_client_id,p_org_id,sub.m_attributesetinstance_id,v_pay_thru_date,v_unit_pricestd,v_unit_pricelist,v_unit_pricelimit,v_line_amt,v_temp_line_id);
        IF v_unit_pricestd IS NOT NULL THEN
           v_qty := 1; -- Something to bill
+          v_period_qty := 1;
        ELSE
           mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,3,'P','mod_billing.main','No Calls');
           v_qty := 0; -- Nothing to bill
+          v_period_qty := 1;
        END IF;
     ELSE
        mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,3,'P','mod_billing.main','Invalid Frequency Type:'||sub.frequencytype);
