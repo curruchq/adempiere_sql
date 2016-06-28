@@ -850,7 +850,8 @@ PROCEDURE invline(
  p_pricelist_id              IN        NUMBER,
  p_invoice_id                OUT       NUMBER,
  p_line_id                   OUT       NUMBER,
- p_run_as_date               IN        DATE)
+ p_run_as_date               IN        DATE,
+ p_period_qty                IN        NUMBER)
 AS
 
 v_invoice_id                 NUMBER;
@@ -877,10 +878,10 @@ BEGIN
               p_bpartner_id,
               p_bpartner_location_id,
               p_run_as_date);
-   
+    
     -- Get next line id
     ad_sequence_next('C_InvoiceLine',1000000,v_invoice_line_id);
-    
+
     -- Get current max line no
     SELECT NVL(max(line),0)+10
     INTO   v_line_no
@@ -944,7 +945,7 @@ BEGIN
 
     -- Calculate Line Amounts
     IF v_istaxexempt = 'N' THEN
-       v_tax_amt      := ROUND(p_line_amt * v_tax_rate / 100,2);
+      v_tax_amt      := ROUND(p_line_amt * v_tax_rate / 100,2);
     ELSE
        v_tax_amt      := 0;
     END IF;    
@@ -994,8 +995,9 @@ BEGIN
      linetotalamt,
      processed,
      qtyentered,
-     priceentered,
-     rramt)
+     PRICEENTERED,
+     RRAMT,
+     periodqty)
     VALUES(
      v_invoice_line_id,                -- c_invoiceline_id
      p_client_id,	                     -- ad_client_id
@@ -1023,8 +1025,9 @@ BEGIN
      v_line_total,                     -- linetotalamt
      'N',	                             -- processed
      p_quantity,	                     -- qtyentered
-     p_pricestd,                       -- priceentered
-     0);	                             -- rramt
+     P_PRICESTD,                       -- priceentered
+     0,                                -- rramt
+     p_period_qty);	                   -- periodqty
     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,4,'P','mod_billing.InvLine','New Line Inserted');
 
     -- Update invoice header totals
@@ -1453,6 +1456,7 @@ v_line_id                    NUMBER;
 v_sql_cnt                    NUMBER;
 v_pay_thru_date              DATE;
 v_temp_line_id               NUMBER;
+v_period_qty                 NUMBER;
 
 ----------------------
 BEGIN
@@ -1575,7 +1579,8 @@ FOR cycle IN cycle_c LOOP
     END IF;
 
     -- Calculate the number of units to bill based on base days of sub type and get price
-    IF sub.frequencytype = 'N' THEN -- Months
+    If Sub.Frequencytype = 'N' Then -- Months
+       v_period_qty := MONTHS_BETWEEN(v_pay_thru_date,sub.paiduntildate);
        v_qty := MONTHS_BETWEEN(v_pay_thru_date,sub.paiduntildate);
        getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
     ELSIF sub.frequencytype = 'D' THEN -- Days
@@ -1585,9 +1590,11 @@ FOR cycle IN cycle_c LOOP
        v_pay_thru_date := sub.renewaldate; -- Set pay thru to end date
        -- If weve already billed this dont charge again.
        IF sub.ever_billed = 'Y' THEN
-          v_qty := 0;
+          V_Qty := 0;
+          v_period_qty := 1;
        ELSE
-          v_qty := 1; -- Something to bill
+          V_Qty := 1; -- Something to bill
+          v_period_qty := 1;
           getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
        END IF;
     ELSIF sub.frequencytype = 'Y' THEN -- Monthly Calls
@@ -1636,7 +1643,7 @@ FOR cycle IN cycle_c LOOP
             sub.c_bpartner_location_id,
             v_line_description,
             sub.m_product_id,
-            v_qty,
+            sub.bill_qty,
             v_unit_pricestd,
             v_unit_pricelist,
             v_unit_pricelimit,
@@ -1650,7 +1657,8 @@ FOR cycle IN cycle_c LOOP
             sub.m_pricelist_id,
             v_invoice_id,
             v_line_id,
-            p_run_as_date);
+            p_run_as_date,
+            v_period_qty);
 
     END IF;
 
@@ -1726,6 +1734,4 @@ WHEN OTHERS THEN
     
 END main;
  
-END mod_billing;             
-            
-/
+END MOD_BILLING;
