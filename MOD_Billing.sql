@@ -824,7 +824,6 @@ WHEN OTHERS THEN
 
 END invtaxV2;
 
-
 --================================================================================================
 -- Create Invoice Line
 --================================================================================================
@@ -1285,7 +1284,7 @@ COMMIT;
 
 -- Get Run Date
 Begin
-     SELECT p.p_date-1,
+     SELECT p.p_date,
             p.ad_client_id,
             p.ad_org_id
      INTO   v_run_as_date,
@@ -1573,19 +1572,24 @@ FOR cycle IN cycle_c LOOP
     -- If the renewal date is before the paiduntildate, we have over billed so move the pay thru date back.
     -- If the renewal date is before the pay_thru_date then set pay_thru_date to stop at renewal date
     -- Negitive qtys are OK.
-    IF sub.renewaldate < sub.paiduntildate 
-    OR sub.renewaldate < v_pay_thru_date THEN
-       v_pay_thru_date := sub.renewaldate;
-    END IF;
+        -- IF sub.renewaldate < sub.paiduntildate 
+        --  OR sub.renewaldate < v_pay_thru_date THEN
+        --    v_pay_thru_date := sub.renewaldate;
+        -- END IF;
+     IF sub.renewaldate < sub.paiduntildate THEN
+          v_pay_thru_date := sub.paiduntildate-1;
+     ELSIF sub.renewaldate < v_pay_thru_date THEN
+        v_pay_thru_date := sub.renewaldate;   
+     END IF;
 
     -- Calculate the number of units to bill based on base days of sub type and get price
     If Sub.Frequencytype = 'N' Then -- Months
-       v_period_qty := MONTHS_BETWEEN(v_pay_thru_date,sub.paiduntildate);
-       v_qty := MONTHS_BETWEEN(v_pay_thru_date,sub.paiduntildate);
+       v_period_qty := Months_Between(V_Pay_Thru_Date,Sub.Paiduntildate);
+       v_qty := 1;
        getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
     ELSIF sub.frequencytype = 'D' THEN -- Days
        v_period_qty := v_pay_thru_date - sub.paiduntildate;
-        v_qty := v_pay_thru_date - sub.paiduntildate;
+        v_qty := 1;
        getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
     ELSIF sub.frequencytype = 'Z' THEN -- One Off Charge
        v_pay_thru_date := sub.renewaldate; -- Set pay thru to end date
