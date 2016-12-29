@@ -1,4 +1,5 @@
-CREATE OR REPLACE PACKAGE mod_billing IS
+create or replace
+PACKAGE             "MOD_BILLING" IS
 
 PROCEDURE getduedate(
  p_client_id                 IN NUMBER,
@@ -28,15 +29,17 @@ PROCEDURE main(
  p_client_id                 NUMBER,
  p_org_id                    NUMBER,
  p_run_as_date               DATE, -- Billing run date. ie make bills for that biling schedule.
- p_bpartner_id               NUMBER DEFAULT NULL,
- p_bill_calls                VARCHAR2
+ P_Bpartner_Id               Number Default Null,
+ p_bill_calls                VARCHAR2,
+ p_apply_discount            VARCHAR2
 );
 
-END mod_billing; 
+END mod_billing;
 /
 
 
-CREATE OR REPLACE PACKAGE BODY             "MOD_BILLING" IS
+create or replace
+PACKAGE BODY             "MOD_BILLING" IS
 
 --================================================================================================
 -- History
@@ -52,6 +55,7 @@ CREATE OR REPLACE PACKAGE BODY             "MOD_BILLING" IS
 --   2.0.0 08-OCT-08 Add call billing logic
 --   2.0.5 19-JAN-09 Alter submit logging 
 --   2.0.6 14-MAR-09 Alter logic of pay thru date
+--   2.0.7 14-DEC-16 Add discount calculation logic
 --================================================================================================
 
 g_trapped                    EXCEPTION;
@@ -177,6 +181,158 @@ WHEN OTHERS THEN
      RAISE;
 
 END getprice;
+
+--================================================================================================
+-- Get a discounted price for an item and a date form a specific price list
+--================================================================================================
+
+PROCEDURE getdiscountedprice(
+ p_client_id                 IN NUMBER,
+ p_org_id                    IN NUMBER,
+ p_pricelist_id              IN NUMBER,
+ p_product_id                IN NUMBER,
+ p_price_date                IN DATE,
+ p_bpartner_id               IN NUMBER,
+ p_quantity                  IN NUMBER,
+ p_getpricestd               OUT NUMBER,
+ p_getpricelist              OUT NUMBER,
+ p_getpricelimit             OUT NUMBER
+)
+IS
+
+v_resultstd                  NUMBER;
+v_resultlist                 NUMBER;
+v_resultlimit                NUMBER;
+v_pricelistversion_id        NUMBER;
+v_baseversion_id             NUMBER;
+v_discountschema_id          NUMBER;
+v_discount		     NUMBER;
+v_discountedprice            NUMBER;
+
+-- Select all discount breaks for a product 
+CURSOR breaks_c (i_m_discountschema_id NUMBER)  IS
+SELECT dsb.*
+FROM   m_discountschemabreak dsb
+WHERE  dsb.m_discountschema_id = i_m_discountschema_id AND dsb.m_product_id = p_product_id
+ORDER BY dsb.seqno;
+
+BEGIN
+
+
+-- Get latest price list verison
+BEGIN
+     SELECT v1.m_pricelist_version_id,
+            v1.m_pricelist_version_base_id
+     INTO   v_pricelistversion_id,
+            v_baseversion_id
+     FROM   m_pricelist_version v1
+     WHERE  v1.m_pricelist_id          = p_pricelist_id
+     AND    v1.isactive                = 'Y'
+     AND    v1.validfrom               = 
+            (SELECT MAX(v2.validfrom)
+             FROM   m_pricelist_version v2
+             WHERE  v2.m_pricelist_id  = v1.m_pricelist_id
+             AND    v2.isactive        = 'Y'
+             AND    v2.validfrom       <= p_price_date);
+EXCEPTION
+WHEN NO_DATA_FOUND THEN
+     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,2,'P','mod_billing.getprice.version','NODATA:'||p_pricelist_id||':'||p_product_id||':'||p_price_date);
+     v_resultstd := NULL;
+     v_resultlist := NULL;
+     v_resultlimit := NULL;
+     RAISE g_trapped;
+WHEN TOO_MANY_ROWS THEN
+     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,2,'P','mod_billing.getprice.version','TOOMANY:'||p_pricelist_id||':'||p_product_id||':'||p_price_date);
+     v_resultstd := NULL;
+     v_resultlist := NULL;
+     v_resultlimit := NULL;
+     RAISE g_trapped;
+END;
+
+-- Get item price from current version
+BEGIN
+     SELECT p.pricestd, p.pricelist, p.pricelimit
+     INTO   v_resultstd, v_resultlist, v_resultlimit
+     FROM   m_productprice p
+     WHERE  p.m_pricelist_version_id   = v_pricelistversion_id
+     AND    p.m_product_id             = p_product_id
+     AND    p.isactive                 = 'Y';
+EXCEPTION 
+WHEN NO_DATA_FOUND THEN
+     v_resultstd := NULL;
+     v_resultlist := NULL;
+     v_resultlimit := NULL;
+WHEN TOO_MANY_ROWS THEN
+     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,2,'P','mod_billing.getprice.price','TOOMANY:'||p_pricelist_id||':'||p_product_id||':'||p_price_date);
+     v_resultstd := NULL;
+     v_resultlist := NULL;
+     v_resultlimit := NULL;
+     RAISE g_trapped;
+END;
+
+-- If none found so far try the base price list
+IF v_resultstd IS NULL THEN
+
+   BEGIN
+     SELECT p.pricestd, p.pricelist, p.pricelimit
+     INTO   v_resultstd, v_resultlist, v_resultlimit
+     FROM   m_productprice p
+     WHERE  p.m_pricelist_version_id   = v_baseversion_id
+     AND    p.m_product_id             = p_product_id
+     AND    p.isactive                 = 'Y';
+   EXCEPTION
+   WHEN NO_DATA_FOUND THEN
+     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,2,'P','mod_billing.getprice.base','NODATA:'||p_pricelist_id||':'||p_product_id||':'||p_price_date);
+     v_resultstd := NULL;
+     v_resultlist := NULL;
+     v_resultlimit := NULL;
+     RAISE g_trapped;
+   WHEN TOO_MANY_ROWS THEN
+     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,2,'P','mod_billing.getprice.base','TOOMANY:'||p_pricelist_id||':'||p_product_id||':'||p_price_date);
+     v_resultstd := NULL;
+     v_resultlist := NULL;
+     v_resultlimit := NULL;
+     RAISE g_trapped;
+   END;
+   
+END IF;
+
+-- Get discount schema from business partner
+BEGIN
+     SELECT bp.m_discountschema_id
+     INTO   v_discountschema_id
+     FROM   c_bpartner bp
+     WHERE bp.c_bpartner_id = p_bpartner_id;
+EXCEPTION 
+WHEN NO_DATA_FOUND THEN
+     v_discountschema_id := NULL;
+WHEN TOO_MANY_ROWS THEN
+     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,2,'P','mod_billing.getdiscountprice.discountschema','TOOMANY:'||p_bpartner_id);
+     v_discountschema_id := NULL;
+     RAISE g_trapped;
+END;
+
+v_discount := 0;
+FOR break IN breaks_c (v_discountschema_id) LOOP
+	IF (p_quantity > break.breakvalue) THEN
+		v_discount := break.breakdiscount;
+	END IF ;
+END LOOP;
+
+v_discountedprice := (100-v_discount)/100;
+
+p_getpricestd      := ROUND(v_resultstd * v_discountedprice , 2);
+p_getpricelist     := v_resultlist;
+p_getpricelimit    := v_resultlimit;
+
+EXCEPTION 
+WHEN OTHERS THEN
+     g_err := SQLCODE;
+     g_errm := SQLERRM;
+     mod_utils.debug(p_client_id,p_org_id,g_debug,g_batch_id,1,'P','mod_billing.getprice','UNKNOWN:'||g_err||':'||g_errm||':'||p_pricelist_id||':'||p_product_id||':'||p_price_date);
+     RAISE;
+
+END getdiscountedprice;
 
 --================================================================================================
 -- Work out the due date
@@ -850,7 +1006,9 @@ PROCEDURE invline(
  p_invoice_id                OUT       NUMBER,
  p_line_id                   OUT       NUMBER,
  p_run_as_date               IN        DATE,
- p_period_qty                IN        NUMBER)
+ p_period_qty                IN        NUMBER,
+ p_apply_discount            IN        VARCHAR2
+)
 AS
 
 v_invoice_id                 NUMBER;
@@ -863,7 +1021,7 @@ v_tax_amt                    NUMBER;
 v_attrsetinst_id             NUMBER;
 v_line_total                 NUMBER;
 v_istaxexempt                VARCHAR2(1);
-v_taxcategory_id             NUMBER;
+V_TAXCATEGORY_ID             NUMBER;
 
 BEGIN
 
@@ -964,7 +1122,7 @@ BEGIN
     mod_utils.setattr(g_debug,g_batch_id,p_client_id, p_org_id, v_attrsetinst_id, 'INVLINE', v_invoice_line_id, 'BILL_Num_Mins', p_num_mins);
             
     -- Update description of attribute set instance
-    mod_utils.setinstdescr(p_client_id,p_org_id,g_debug,g_batch_id,v_attrsetinst_id);
+    MOD_UTILS.SETINSTDESCR(P_CLIENT_ID,P_ORG_ID,G_DEBUG,G_BATCH_ID,V_ATTRSETINST_ID);
     
     -- Insert Invoice Line
     INSERT INTO c_invoiceline(
@@ -1257,6 +1415,7 @@ v_org_id                     NUMBER;
 v_run_as_date                DATE;
 v_bpartner_id                NUMBER;
 v_bill_calls                 VARCHAR2(1);
+v_apply_discount             VARCHAR2(1);
 v_status                     NUMBER;
 
 BEGIN
@@ -1323,8 +1482,20 @@ WHEN NO_DATA_FOUND THEN
      v_bill_calls := 'N';
 END;
 
+-- Get Apply Discount Flag
+BEGIN
+     SELECT p.p_string
+     INTO   v_apply_discount
+     FROM   ad_pinstance_para p
+     WHERE  p.ad_pinstance_id = p_param_id
+     AND    UPPER(p.parametername) = 'P_APPLY_DISCOUNT';
+EXCEPTION 
+WHEN NO_DATA_FOUND THEN
+     v_bill_calls := 'N';
+END;
+
 -- Call Main Code
-main(v_debug, v_client_id, v_org_id, v_run_as_date,v_bpartner_id, v_bill_calls);
+main(v_debug, v_client_id, v_org_id, v_run_as_date,v_bpartner_id, v_bill_calls, v_apply_discount);
 COMMIT;
 
 -- Copy log messages back to standard table
@@ -1373,7 +1544,8 @@ PROCEDURE main(
  p_org_id                    NUMBER,
  p_run_as_date               DATE, -- Billing run date. ie make bills for that biling schedule.
  p_bpartner_id               NUMBER DEFAULT NULL,
- p_bill_calls                VARCHAR2
+ p_bill_calls                VARCHAR2,
+ p_apply_discount            VARCHAR2
 )
 IS
 
@@ -1577,7 +1749,7 @@ FOR cycle IN cycle_c LOOP
         --    v_pay_thru_date := sub.renewaldate;
         -- END IF;
      IF sub.renewaldate < sub.paiduntildate THEN
-          v_pay_thru_date := sub.paiduntildate-1;
+          v_pay_thru_date := sub.renewaldate-1;
      ELSIF sub.renewaldate < v_pay_thru_date THEN
         v_pay_thru_date := sub.renewaldate;   
      END IF;
@@ -1586,11 +1758,19 @@ FOR cycle IN cycle_c LOOP
     If Sub.Frequencytype = 'N' Then -- Months
        v_period_qty := Months_Between(V_Pay_Thru_Date,Sub.Paiduntildate);
        v_qty := 1;
-       getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
+       IF p_apply_discount = 'Y' THEN
+  	     getdiscountedprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, sub.c_bpartner_id, sub.bill_qty, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
+       ELSE
+  	     getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
+       END IF;
     ELSIF sub.frequencytype = 'D' THEN -- Days
        v_period_qty := v_pay_thru_date - sub.paiduntildate;
         v_qty := 1;
-       getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
+       IF p_apply_discount = 'Y' THEN
+  	     getdiscountedprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, sub.c_bpartner_id, sub.bill_qty, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
+       ELSE
+  	     getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
+       END IF;
     ELSIF sub.frequencytype = 'Z' THEN -- One Off Charge
        v_pay_thru_date := sub.renewaldate; -- Set pay thru to end date
        -- If weve already billed this dont charge again.
@@ -1600,7 +1780,11 @@ FOR cycle IN cycle_c LOOP
        ELSE
           v_qty := 1; -- Something to bill
            v_period_qty := 1;
-          getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
+          IF p_apply_discount = 'Y' THEN
+  	     getdiscountedprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, sub.c_bpartner_id, sub.bill_qty, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
+       ELSE
+  	     getprice(p_client_id,p_org_id,sub.m_pricelist_id, sub.m_product_id, cycle.run_date, v_unit_pricestd, v_unit_pricelist, v_unit_pricelimit);
+       END IF;
        END IF;
     ELSIF sub.frequencytype = 'Y' THEN -- Monthly Calls
        getcalls(p_client_id,p_org_id,sub.m_attributesetinstance_id,v_pay_thru_date,v_unit_pricestd,v_unit_pricelist,v_unit_pricelimit,v_line_amt,v_temp_line_id);
@@ -1665,7 +1849,8 @@ FOR cycle IN cycle_c LOOP
             v_invoice_id,
             v_line_id,
             p_run_as_date,
-            v_period_qty);
+            v_period_qty,
+            p_apply_discount);
 
     END IF;
 
