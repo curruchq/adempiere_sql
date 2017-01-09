@@ -491,8 +491,8 @@ BEGIN
     -- Get some data from the customer etc   
     BEGIN
    
-       SELECT c.salesrep_id,
-              NVL(c.paymentrule,'T') payment_rule,
+              SELECT c.salesrep_id,
+              COALESCE(bpl.paymentrule , n''||c.paymentrule ,n'T') payment_rule,
               c.c_paymentterm_id,
               c.m_pricelist_id,
               c.name
@@ -502,7 +502,8 @@ BEGIN
               v_pricelist_id,
               v_bpartner_name
        FROM   c_bpartner c
-       WHERE  c.c_bpartner_id = p_bpartner_id;
+       INNER JOIN c_bpartner_location bpl ON (c.c_bpartner_id = bpl.c_bpartner_id)
+       WHERE  c.c_bpartner_id = p_bpartner_id AND bpl.c_bpartner_location_id = p_bpartner_location_id;
        
     EXCEPTION 
     WHEN NO_DATA_FOUND THEN
