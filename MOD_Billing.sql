@@ -1459,6 +1459,20 @@ WHEN NO_DATA_FOUND THEN
      RAISE;
 END;
 
+
+-- Get Organization ID
+BEGIN
+     SELECT p.ad_org_id
+     INTO   v_org_id
+     FROM   ad_pinstance_para p
+     WHERE  p.ad_pinstance_id = p_param_id
+     AND    UPPER(p.parametername) = 'P_AD_ORG_ID';
+EXCEPTION 
+WHEN NO_DATA_FOUND THEN
+     v_org_id := NULL;
+END;
+
+
 -- Get BPartner ID
 BEGIN
      SELECT p.p_number
