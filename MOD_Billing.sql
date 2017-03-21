@@ -56,6 +56,7 @@ PACKAGE BODY             "MOD_BILLING" IS
 --   2.0.5 19-JAN-09 Alter submit logging 
 --   2.0.6 14-MAR-09 Alter logic of pay thru date
 --   2.0.7 14-DEC-16 Add discount calculation logic
+--   2.0.8 17-MAR-17 Added a new parameter AD_Org_ID to the process.
 --================================================================================================
 
 g_trapped                    EXCEPTION;
@@ -1462,7 +1463,7 @@ END;
 
 -- Get Organization ID
 BEGIN
-     SELECT p.ad_org_id
+     SELECT p.p_number
      INTO   v_org_id
      FROM   ad_pinstance_para p
      WHERE  p.ad_pinstance_id = p_param_id
