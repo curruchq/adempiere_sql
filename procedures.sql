@@ -1929,8 +1929,10 @@ WHEN NO_DATA_FOUND THEN
      RAISE;
 END;
 
+
+-- Get Organization
 BEGIN
-     SELECT p.ad_org_id
+     SELECT p.p_number
      INTO   v_org_id
      FROM   ad_pinstance_para p
      WHERE  p.ad_pinstance_id = p_param_id
