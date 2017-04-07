@@ -105,7 +105,7 @@ begin
 g_batch_id := p_param_id;
 
 --maintain session variables
-maintain_session(v_client_id,v_org_id,g_debug,g_batch_id,p_param_id,null,null,null,null,0,0);
+--maintain_session(v_client_id,v_org_id,g_debug,g_batch_id,p_param_id,null,null,null,null,0,0);
 
 -- check process status
 select i.result
@@ -120,7 +120,7 @@ end if;
 
 -- set to processing
 update ad_pinstance i
-set    i.isprocessing = 'y',
+set    i.isprocessing = 'Y',
        i.updated = sysdate
 where  i.ad_pinstance_id = p_param_id;
 commit;
@@ -139,9 +139,11 @@ begin
 exception 
 when no_data_found then
      debug(v_client_id,v_org_id,g_debug,g_batch_id,2,'p','mod_billing.submit.run date','norows');
-     update_session('g_errm','mod_billing.submit.run date : norows',p_param_id);
+    -- update_session('g_errm','mod_billing.submit.run date : norows',p_param_id);
      raise;
 end;
+
+maintain_session(v_client_id,v_org_id,g_debug,g_batch_id,p_param_id,null,null,null,null,0,0);
 
 begin
      select p.ad_org_id
@@ -177,7 +179,7 @@ begin
      and    upper(p.parametername) = 'p_bill_calls';
 exception 
 when no_data_found then
-     v_bill_calls := 'n';
+     v_bill_calls := 'N';
 end;
 
 -- get apply discount flag
@@ -189,7 +191,7 @@ begin
      and    upper(p.parametername) = 'p_apply_discount';
 exception 
 when no_data_found then
-     v_bill_calls := 'n';
+     v_bill_calls := 'N';
 end;
 
 -- call main code
@@ -204,7 +206,7 @@ where  z.batch_id = p_param_id;
 
 -- set status on completion
 update ad_pinstance i
-set    i.isprocessing = 'n',
+set    i.isprocessing = 'N',
        i.updated = sysdate,
        i.result = 1
 where  i.ad_pinstance_id = p_param_id;
@@ -224,7 +226,7 @@ when others then
 
      -- set status on completion
      update ad_pinstance i
-     set    i.isprocessing = 'n',
+     set    i.isprocessing = 'N',
             i.updated = sysdate,
             i.result = 0,
             i.errormsg = g_errm
