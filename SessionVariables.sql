@@ -135,7 +135,7 @@ begin
             v_org_id
      from   ad_pinstance_para p
      where  p.ad_pinstance_id = p_param_id
-     and    upper(p.parametername) = 'p_run_date';
+     and    upper(p.parametername) = 'P_RUN_DATE';
 exception 
 when no_data_found then
      debug(v_client_id,v_org_id,g_debug,g_batch_id,2,'p','mod_billing.submit.run date','norows');
@@ -150,7 +150,7 @@ begin
      into   v_org_id
      from   ad_pinstance_para p
      where  p.ad_pinstance_id = p_param_id
-     and    upper(p.parametername) = 'p_ad_org_id';
+     and    upper(p.parametername) = 'P_AD_ORG_ID';
 exception 
 when no_data_found then
      v_org_id := null;
@@ -164,7 +164,7 @@ begin
      into   v_bpartner_id
      from   ad_pinstance_para p
      where  p.ad_pinstance_id = p_param_id
-     and    upper(p.parametername) = 'p_bpartner_id';
+     and    upper(p.parametername) = 'P_BPARTNER_ID';
 exception 
 when no_data_found then
      v_bpartner_id := null;
@@ -176,7 +176,7 @@ begin
      into   v_bill_calls
      from   ad_pinstance_para p
      where  p.ad_pinstance_id = p_param_id
-     and    upper(p.parametername) = 'p_bill_calls';
+     and    upper(p.parametername) = 'P_BILL_CALLS';
 exception 
 when no_data_found then
      v_bill_calls := 'N';
@@ -188,7 +188,7 @@ begin
      into   v_apply_discount
      from   ad_pinstance_para p
      where  p.ad_pinstance_id = p_param_id
-     and    upper(p.parametername) = 'p_apply_discount';
+     and    upper(p.parametername) = 'P_APPLY_DISCOUNT';
 exception 
 when no_data_found then
      v_bill_calls := 'N';
