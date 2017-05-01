@@ -45,8 +45,6 @@ BEGIN
          VALUES(p_client_id, p_org_id, 
                 'Y',SYSDATE,0,SYSDATE,0,
                 p_ad_pinstance_Id, p_g_trapped,p_debug ,p_batch_id , p_g_ref, p_g_err,p_g_errm,p_g_invoice_count,p_g_invoice_line_count);
-      END IF;
-   END IF;
 
    COMMIT;
    
@@ -1665,7 +1663,6 @@ PROCEDURE getprice(
  p_pricelist_id              IN NUMBER,
  p_product_id                IN NUMBER,
  p_price_date                IN DATE,
- p_ad_pinstance_id           IN NUMBER,
  p_getpricestd               OUT NUMBER,
  p_getpricelist              OUT NUMBER,
  p_getpricelimit             OUT NUMBER
@@ -1685,7 +1682,7 @@ G_Trapped                    Exception;
 g_batch_id                   NUMBER;
 
 BEGIN
-g_batch_id := p_ad_pinstance_id;
+
 -- Get latest price list verison
 BEGIN
      SELECT v1.m_pricelist_version_id,
@@ -1907,3 +1904,4 @@ END rating;
 
 /
 
+exec dbms_utility.compile_schema('ADEMPIERE');
