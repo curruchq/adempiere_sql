@@ -1,3 +1,6 @@
+--CREATE, INSERT AND UPDATE SCRIPTS FOR NEW TEMPORARY TABLE TO MAINTAIN SESSION VARIABLES
+
+
 CREATE GLOBAL TEMPORARY TABLE "ADEMPIERE"."MOD_SESSION_VARIABLES" 
 ( 
 	"AD_CLIENT_ID" NUMBER(10,0) NOT NULL ENABLE, 
@@ -73,7 +76,441 @@ end update_session;
 
 /
 
+--END SESSION TABLE SCRIPTS
 
+--MOD UTILS PACKAGE INDIVIDUAL PROCEDURES
+
+
+create or replace
+PROCEDURE debug
+(p_client_id                 IN NUMBER,
+ p_org_id                    IN NUMBER,
+ p_debug                     IN NUMBER,
+ p_batch_id                  IN NUMBER,
+ p_level                     IN NUMBER,
+ p_callfromtype              IN VARCHAR2,
+ p_process                   IN VARCHAR2,
+ p_mesg						           IN VARCHAR2) IS
+
+PRAGMA AUTONOMOUS_TRANSACTION;
+
+l_log_id NUMBER;
+ 
+BEGIN
+
+   --IF p_level IN (1,2,3) THEN
+   --  ROLLBACK;
+   --END IF;
+   
+   IF p_level <= p_debug THEN
+	    DBMS_OUTPUT.PUT_LINE(p_level||':'||p_process||'->'||p_mesg);
+      IF p_callfromtype <> 'F' THEN
+         SELECT mod_log_s.nextval INTO l_log_id FROM dual;
+         INSERT INTO mod_log(ad_client_id, ad_org_id,
+                isactive, created, createdby, updated, updatedby,
+                log_date,mesg_level,process,mesg,batch_id, log_id)
+         VALUES(p_client_id, p_org_id, 
+                'Y',SYSDATE,0,SYSDATE,0,
+                SYSDATE, p_level, p_process, p_mesg, p_batch_id, l_log_id);
+      END IF;
+   END IF;
+
+   COMMIT;
+   
+   --IF p_level IN (1,2,3) THEN
+   --   COMMIT;
+   --END IF;
+   
+END debug;
+
+/
+
+create or replace
+FUNCTION getattr(
+ p_client_id                 NUMBER,
+ p_org_id                    NUMBER,
+ p_debug                     NUMBER,
+ p_batch_id                  NUMBER,
+ p_attrsetinst_id            NUMBER,
+ p_source_type               VARCHAR2,
+ p_source_id                 NUMBER,
+ p_attribute                 VARCHAR2
+)
+RETURN VARCHAR
+IS
+V_Result                     Varchar2(200);
+G_Debug Number;
+G_Err                        Number;
+G_Errm                       Varchar2(1000);   
+g_trapped                    EXCEPTION;
+BEGIN
+
+g_debug := p_debug;
+
+IF p_attrsetinst_id IS NULL THEN
+    debug(p_client_id, p_org_id, g_debug,p_batch_id,3,'F','mod_utils.getattr','NULLINSTID:'||p_source_type||':'||p_source_id);
+   v_result := NULL;
+ELSE
+   BEGIN
+
+     SELECT NVL(v.description,i.value)
+     INTO   v_result
+     FROM   m_attributeinstance i,
+            m_attribute a,
+            m_attributevalue v
+     WHERE  i.m_attributesetinstance_id     = p_attrsetinst_id
+     AND    i.m_attribute_id                = a.m_attribute_id
+     AND    UPPER(a.name)                   = UPPER(p_attribute)
+     AND    i.m_attributevalue_id           = v.m_attributevalue_id(+);
+
+   EXCEPTION
+
+   WHEN NO_DATA_FOUND THEN
+        debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.getattr','NODATA:'||p_attrsetinst_id||':'||p_source_type||':'||p_source_id||':'||p_attribute);
+     v_result := NULL;
+
+   WHEN TOO_MANY_ROWS THEN
+     debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.getattr','TOOMANY:'||p_attrsetinst_id||':'||p_source_type||':'||p_source_id||':'||':'||p_attribute);
+     v_result := NULL;
+     RAISE g_trapped;
+     
+   END;
+END IF;
+
+RETURN v_result;
+
+EXCEPTION 
+WHEN OTHERS THEN
+     g_err := SQLCODE;
+     g_errm := SQLERRM;
+     debug(p_client_id, p_org_id, g_debug,p_batch_id,1,'F','mod_utils.getattr','UNKNOWN:'||g_err||':'||g_errm||':'||p_attrsetinst_id||':'||p_source_type||':'||p_source_id||':'||p_attribute);
+     RAISE;
+
+End Getattr;
+
+/
+
+create or replace
+PROCEDURE setattr(
+ p_debug                     NUMBER,
+ p_batch_id                  IN NUMBER,
+ p_client_id                 NUMBER,
+ p_org_id                    NUMBER,
+ p_attrsetinst_id            NUMBER,
+ p_source_type               VARCHAR2,
+ p_source_id                 NUMBER,
+ p_attribute                 VARCHAR2,
+ p_new_value                 VARCHAR2 DEFAULT NULL
+)
+IS
+
+v_attribute_id               NUMBER;
+v_attributevalue_id          NUMBER;
+v_valuetype                  VARCHAR2(1);
+V_New_Value                  Varchar2(200);
+
+G_Debug Number;
+G_Err                        Number;
+G_Errm                       Varchar2(1000);   
+g_trapped                    EXCEPTION;
+
+BEGIN
+
+g_debug  := p_debug;
+
+   -- Look to see if atrribute already exists against instance
+   BEGIN
+
+     SELECT i.m_attribute_id,
+            v.m_attributevalue_id
+     INTO   v_attribute_id,
+            v_attributevalue_id
+     FROM   m_attributeinstance i,
+            m_attribute a,
+            m_attributevalue v
+     WHERE  i.m_attributesetinstance_id     = p_attrsetinst_id
+     AND    i.m_attribute_id                = a.m_attribute_id
+     AND    UPPER(a.name)                   = UPPER(p_attribute)
+     AND    i.m_attributevalue_id           = v.m_attributevalue_id(+);
+
+   EXCEPTION
+   WHEN NO_DATA_FOUND THEN
+        v_attribute_id       := NULL;
+        v_attributevalue_id  := NULL;
+   WHEN TOO_MANY_ROWS THEN
+        debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.setattr','TOOMANY:'||p_attrsetinst_id||':'||p_source_type||':'||p_source_id||':'||p_attribute);
+        RAISE g_trapped;
+     
+   END;
+
+   -- Already exists so update it
+   IF v_attribute_id IS NOT NULL THEN
+
+     IF v_attributevalue_id IS NULL THEN
+
+        -- It is a simple value then set it
+        UPDATE m_attributeinstance i
+        SET    i.value                      = p_new_value,
+               i.updated                    = SYSDATE,
+               i.updatedby                  = 0
+        WHERE  i.m_attributesetinstance_id  = p_attrsetinst_id
+        AND    i.m_attribute_id             = v_attribute_id;
+
+     ELSE
+
+     -- Get the id of the new value and set that
+        BEGIN
+
+            SELECT v.m_attributevalue_id
+            INTO   v_attributevalue_id
+            FROM   m_attributevalue v
+            WHERE  v.m_attribute_id         = v_attribute_id
+            AND    UPPER(v.description)     = UPPER(p_new_value);             
+            
+            UPDATE m_attributeinstance i
+            SET    i.m_attributevalue_id        = v_attributevalue_id,
+                   i.updated                    = SYSDATE,
+                   i.updatedby                  = 0
+            WHERE  i.m_attributesetinstance_id  = p_attrsetinst_id
+            AND    i.m_attribute_id             = v_attribute_id;
+            
+        EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+             debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.setval.updgetval','NOROWS:'||v_attributevalue_id||':'||p_new_value);
+             RAISE g_trapped;
+        WHEN TOO_MANY_ROWS THEN
+             debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.setval.updgetval','TOOMANY:'||v_attributevalue_id||':'||p_new_value);
+             RAISE g_trapped;
+        END;    
+        
+     END IF;
+
+   -- Does not exists so create it.
+   ELSE      
+
+        -- Get some attribute details
+        BEGIN
+            SELECT a.m_attribute_id,
+                   a.attributevaluetype
+            INTO   v_attribute_id,
+                   v_valuetype
+            FROM   m_attribute a
+            WHERE  UPPER(a.name)  = UPPER(p_attribute);
+        EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+             debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.setval.insgetattr','NOROWS:'||p_attribute||':'||p_new_value);
+             RAISE g_trapped;
+        WHEN TOO_MANY_ROWS THEN
+             debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.setval.insgetattr','TOOMANY:'||p_attribute||':'||p_new_value);
+             RAISE g_trapped;
+        END;    
+
+        -- If attribute is value based then get attribute value id        
+        IF v_valuetype = 'L' THEN
+
+          BEGIN
+            SELECT v.m_attributevalue_id
+            INTO   v_attributevalue_id
+            FROM   m_attributevalue v
+            WHERE  v.m_attribute_id         = v_attribute_id
+            AND    UPPER(v.description)     = UPPER(p_new_value);             
+          EXCEPTION
+          WHEN NO_DATA_FOUND THEN
+             debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.setval.insgetval','NOROWS:'||v_attributevalue_id||':'||p_new_value);
+             RAISE g_trapped;
+          WHEN TOO_MANY_ROWS THEN
+             debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.setval.insgetval','TOOMANY:'||v_attributevalue_id||':'||p_new_value);
+             RAISE g_trapped;
+          END;    
+          v_new_value := NULL;
+
+        ELSE
+
+          v_new_value             := p_new_value;
+          v_attributevalue_id     := NULL;
+
+        END IF;
+
+        -- Attribte did not exist in set so Insert New attribute instance
+        INSERT INTO m_attributeinstance(
+         m_attributesetinstance_id, 
+         m_attribute_id, 
+         ad_client_id, 
+         ad_org_id, 
+         isactive,
+         created,
+         createdby,
+         updated, 
+         updatedby,
+         m_attributevalue_id,
+         value)
+        VALUES(
+         p_attrsetinst_id,
+         v_attribute_id,
+         p_client_id,
+         p_org_id,
+         'Y',
+         SYSDATE,
+         0,
+         SYSDATE,
+         0,
+         v_attributevalue_id,
+         v_new_value);         
+
+   END IF;
+   
+EXCEPTION 
+WHEN OTHERS THEN
+     g_err := SQLCODE;
+     g_errm := SQLERRM;
+     debug(p_client_id, p_org_id, g_debug,p_batch_id,1,'F','mod_utils.setattr','UNKNOWN:'||g_err||':'||g_errm||':'||p_attrsetinst_id||':'||p_source_type||':'||p_source_id||':'||p_attribute);
+     RAISE;
+
+End Setattr;
+
+/
+
+create or replace
+PROCEDURE newsetinst(
+ p_debug                     NUMBER,
+ p_batch_id                  IN NUMBER,
+ p_attrsetinst_id            IN OUT NUMBER,
+ p_client_id                 IN     NUMBER,
+ p_org_id                    IN     NUMBER,
+ p_source_type               IN     VARCHAR2,
+ p_source_id                 IN     NUMBER,
+ p_attrset_name              IN     VARCHAR2
+)
+IS
+
+V_Attrset_Id                 Number;
+
+G_Debug Number;
+G_Err                        Number;
+G_Errm                       Varchar2(1000);   
+G_Trapped                    Exception;
+
+
+BEGIN
+
+g_debug  := p_debug;
+
+   -- Set attribure set id
+   BEGIN
+       SELECT s.m_attributeset_id
+       INTO   v_attrset_id
+       FROM   m_attributeset s
+       WHERE  UPPER(s.name)       = UPPER(p_attrset_name);
+   EXCEPTION
+   WHEN NO_DATA_FOUND THEN
+        debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.newsetinst.getsetid','NOROWS:'||p_attrset_name);
+        RAISE g_trapped;
+   WHEN TOO_MANY_ROWS THEN
+        debug(p_client_id, p_org_id, g_debug,p_batch_id,2,'F','mod_utils.newsetinst.getsetid','TOOMANY:'||p_attrset_name);
+        RAISE g_trapped;
+   END;    
+
+   -- Get next id
+   ad_sequence_next('M_AttributeSetInstance',1000000,p_attrsetinst_id);
+
+   -- Insert new set
+   INSERT INTO m_attributesetinstance(
+         m_attributesetinstance_id,
+         ad_client_id, 
+         ad_org_id, 
+         isactive,
+         created,
+         createdby,
+         updated, 
+         updatedby,
+         m_attributeset_id,
+         description)
+        VALUES(
+         p_attrsetinst_id,
+         p_client_id,
+         p_org_id,
+         'Y',
+         SYSDATE,
+         0,
+         SYSDATE,
+         0,
+         v_attrset_id,
+         NULL);         
+
+EXCEPTION 
+WHEN OTHERS THEN
+     g_err := SQLCODE;
+     g_errm := SQLERRM;
+     debug(p_client_id, p_org_id, g_debug,p_batch_id,1,'F','mod_utils.newsetinst','UNKNOWN:'||g_err||':'||g_errm||':'||p_attrset_name);
+     RAISE;
+
+END newsetinst;
+
+/
+
+create or replace
+PROCEDURE setinstdescr(
+ p_client_id                 NUMBER,
+ p_org_id                    NUMBER,
+ p_debug                     NUMBER,
+ p_batch_id                  IN NUMBER,
+ p_attrsetinst_id            IN NUMBER)
+IS
+
+CURSOR attr_c IS
+SELECT NVL(v.description,a.value) descr
+FROM   m_attributeinstance a,
+       m_attributevalue v,
+       m_attributesetinstance i,
+       m_attributeuse u
+WHERE  a.m_attributesetinstance_id     = p_attrsetinst_id
+AND    a.m_attributesetinstance_id     = i.m_attributesetinstance_id
+AND    i.m_attributeset_id             = u.m_attributeset_id
+AND    a.m_attribute_id                = u.m_attribute_id
+AND    a.m_attributevalue_id           = v.m_attributevalue_id(+)
+ORDER BY u.seqno;
+
+v_description                VARCHAR2(255);
+V_Seperator                  Varchar2(1);
+G_Debug Number;
+G_Err                        Number;
+G_Errm                       Varchar2(1000);   
+G_Trapped                    Exception;
+
+
+BEGIN
+
+g_debug  := p_debug;
+
+v_description := '';
+v_seperator := '';
+
+FOR attr IN attr_c LOOP
+
+    v_description := v_description || v_seperator || attr.descr;
+    v_seperator := '_';
+    
+END LOOP;
+
+UPDATE m_attributesetinstance i
+SET    i.description = v_description
+WHERE  i.m_attributesetinstance_id = p_attrsetinst_id;
+
+EXCEPTION 
+WHEN OTHERS THEN
+     g_err := SQLCODE;
+     g_errm := SQLERRM;
+     debug(p_client_id, p_org_id, g_debug,p_batch_id,1,'F','mod_utils.setinstdescr','UNKNOWN:'||g_err||':'||g_errm);
+     RAISE;
+
+End Setinstdescr;
+
+/
+
+--END MOD UTILS PROCEDURES
+
+
+--MOD BILLING PACKAGE INDIVIDUAL PROCEDURES
 
 create or replace
 procedure submit(
@@ -891,7 +1328,7 @@ WHEN OTHERS THEN
      update_session('g_errm','mod_billing.getprice : UNKNOWN:'||p_product_id,g_batch_id);
      RAISE;
 
-End Getdiscountedprice;
+End getdiscountedprice;
 
 /
 
@@ -1862,6 +2299,216 @@ WHEN OTHERS THEN
      COMMIT;
 
 End Submit_Rating;
+
+/
+
+create or replace
+PROCEDURE invtax(
+ p_invoice_id                IN OUT    NUMBER,
+ p_client_id                 IN        NUMBER,
+ p_org_id                    IN        NUMBER)
+AS
+
+CURSOR taxes_c IS
+SELECT l.c_tax_id,
+       SUM(l.linenetamt) linenetamt, 
+       SUM(l.taxamt)     taxamt
+FROM   c_invoiceline l
+WHERE  l.c_invoice_id   = p_invoice_id
+GROUP BY l.c_tax_id;
+
+v_count                      NUMBER;
+
+g_trapped                    EXCEPTION;
+g_debug                      NUMBER := 3;
+g_batch_id                   NUMBER;
+g_ref                        NUMBER;
+G_Err                        Number;
+g_errm                       VARCHAR2(1000); 
+
+BEGIN
+
+FOR taxes IN taxes_c LOOP
+
+   -- Look for existing tax line
+    BEGIN
+       SELECT COUNT(1)
+       INTO   v_count
+       FROM   c_invoicetax t
+       WHERE  t.ad_client_id           = p_client_id
+       AND    t.ad_org_id              = p_org_id
+       AND    t.c_invoice_id           = p_invoice_id
+       AND    t.c_tax_id               = taxes.c_tax_id;
+    EXCEPTION    
+    WHEN TOO_MANY_ROWS THEN
+        debug(p_client_id,p_org_id,g_debug,g_batch_id,2,'P','mod_billing.InvTax.Check','TOOMANY:'||p_invoice_id||':'||taxes.c_tax_id);
+        RAISE g_trapped;
+    WHEN NO_DATA_FOUND THEN
+        v_count := 0;
+    END;
+
+    -- Update or insert lines
+    IF v_count <> 0 THEN
+  
+       -- Update existing line  
+       UPDATE c_invoicetax i
+       SET    taxbaseamt     = taxes.linenetamt,
+              taxamt         = taxes.taxamt
+       WHERE  i.c_invoice_id = p_invoice_id
+       AND    i.c_tax_id     = taxes.c_tax_id;
+       debug(p_client_id,p_org_id,g_debug,g_batch_id,5,'P','mod_billing.InvLine','Updated Invoice Tax');
+       
+    ELSE
+
+       -- Insert new tax line
+       INSERT INTO c_invoicetax(
+        c_tax_id,
+        c_invoice_id,
+        ad_client_id,
+        ad_org_id,
+        isactive,
+        created,
+        createdby,
+        updated,
+        updatedby,
+        taxbaseamt,
+        taxamt,
+        processed,
+        istaxincluded)
+       VALUES(
+        taxes.c_tax_id,           -- c_tax_id
+        p_invoice_id,	            -- c_invoice_id
+        p_client_id,              -- ad_client_id
+        p_org_id,                 -- ad_org_id
+        'Y',	                    -- isactive
+        SYSDATE,	                -- created
+        0,	                      -- createdby
+        SYSDATE,	                -- updated
+        0,	                      -- updatedby
+        taxes.linenetamt,         -- taxbase
+        taxes.taxamt,	            -- taxamt
+        'N',	                    -- processed
+        'N');	                  -- iistaxincluded
+        debug(p_client_id,p_org_id,g_debug,g_batch_id,5,'P','mod_billing.InvHeader','Tax Line Inserted');
+
+     END IF;
+
+END LOOP;
+         
+EXCEPTION 
+WHEN OTHERS THEN
+     g_err := SQLCODE;
+     g_errm := SQLERRM;
+     debug(p_client_id,p_org_id,g_debug,g_batch_id,1,'P','mod_billing.invtax','UNKNOWN:'||g_err||':'||g_errm);
+     RAISE;
+
+END invtax;
+
+/
+
+create or replace
+PROCEDURE invtaxV2(
+ p_invoice_id                IN OUT    NUMBER,
+ p_client_id                 IN        NUMBER,
+ p_ad_pinstance_id           IN        NUMBER,
+ p_org_id                    IN        NUMBER)
+AS
+
+CURSOR taxes_c IS
+select l.c_tax_id,sum(l.linenetamt) linenetamt, round(sum(l.linenetamt * t.rate/ 100) , 2 ) taxamt
+from c_invoiceline l
+inner join c_tax t on (l.c_tax_id = t.c_tax_id)
+where l.c_invoice_id =  p_invoice_id
+group by l.c_tax_id;
+
+v_count                      NUMBER;
+
+g_trapped                    EXCEPTION;
+g_debug                      NUMBER := 3;
+g_batch_id                   NUMBER;
+g_ref                        NUMBER;
+G_Err                        Number;
+g_errm                       VARCHAR2(1000); 
+
+BEGIN
+g_batch_id := p_ad_pinstance_id;
+FOR taxes IN taxes_c LOOP
+
+   -- Look for existing tax line
+    BEGIN
+       SELECT COUNT(1)
+       INTO   v_count
+       FROM   c_invoicetax t
+       WHERE  t.ad_client_id           = p_client_id
+       AND    t.ad_org_id              = p_org_id
+       AND    t.c_invoice_id           = p_invoice_id
+       AND    t.c_tax_id               = taxes.c_tax_id;
+    EXCEPTION    
+    WHEN TOO_MANY_ROWS THEN
+        debug(p_client_id,p_org_id,g_debug,g_batch_id,2,'P','mod_billing.InvTax.Check','TOOMANY:'||p_invoice_id||':'||taxes.c_tax_id);
+        update_session('g_errm','mod_billing.InvTax.Check : TOOMANY:'||p_invoice_id||':'||taxes.c_tax_id,g_batch_id);
+        RAISE g_trapped;
+    WHEN NO_DATA_FOUND THEN
+        v_count := 0;
+    END;
+
+    -- Update or insert lines
+    IF v_count <> 0 THEN
+  
+       -- Update existing line  
+       UPDATE c_invoicetax i
+       SET    taxbaseamt     = taxes.linenetamt,
+              taxamt         = taxes.taxamt
+       WHERE  i.c_invoice_id = p_invoice_id
+       AND    i.c_tax_id     = taxes.c_tax_id;
+       debug(p_client_id,p_org_id,g_debug,g_batch_id,5,'P','mod_billing.InvLine','Updated Invoice Tax');
+       
+    ELSE
+
+       -- Insert new tax line
+       INSERT INTO c_invoicetax(
+        c_tax_id,
+        c_invoice_id,
+        ad_client_id,
+        ad_org_id,
+        isactive,
+        created,
+        createdby,
+        updated,
+        updatedby,
+        taxbaseamt,
+        taxamt,
+        processed,
+        istaxincluded)
+       VALUES(
+        taxes.c_tax_id,           -- c_tax_id
+        p_invoice_id,	            -- c_invoice_id
+        p_client_id,              -- ad_client_id
+        p_org_id,                 -- ad_org_id
+        'Y',	                    -- isactive
+        SYSDATE,	                -- created
+        0,	                      -- createdby
+        SYSDATE,	                -- updated
+        0,	                      -- updatedby
+        taxes.linenetamt,         -- taxbase
+        taxes.taxamt,	            -- taxamt
+        'N',	                    -- processed
+        'N');	                  -- iistaxincluded
+        debug(p_client_id,p_org_id,g_debug,g_batch_id,5,'P','mod_billing.InvHeader','Tax Line Inserted');
+
+     END IF;
+
+END LOOP;
+         
+EXCEPTION 
+WHEN OTHERS THEN
+     g_err := SQLCODE;
+     g_errm := SQLERRM;
+     debug(p_client_id,p_org_id,g_debug,g_batch_id,1,'P','mod_billing.invtax','UNKNOWN:'||g_err||':'||g_errm);
+     update_session('g_errm','mod_billing.InvTax : UNKNOWN:'||g_err||':'||g_errm,g_batch_id);
+     RAISE;
+
+End Invtaxv2;
 
 /
 
