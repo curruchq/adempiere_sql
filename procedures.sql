@@ -1914,7 +1914,7 @@ COMMIT;
 
 -- Get Run Date
 BEGIN
-     SELECT p.p_date,
+     SELECT p.p_date-1,
             p.ad_client_id,
             p.ad_org_id
      INTO   v_run_as_date,
